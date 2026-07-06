@@ -150,6 +150,30 @@
   @media (max-width: 768px) {
     .terminal { font-size: 11px; }
   }
+
+  /* ── WELCOME PANEL ─────────────────────────────────────── */
+  .welcome-panel { margin: 2px 0 10px; white-space: normal; }
+  .welcome-topbar { color: var(--claude); margin-bottom: 0; }
+  .welcome-body { display: flex; min-height: 110px; }
+  .welcome-left {
+    flex: 0 0 42%;
+    padding: 8px 12px 8px 2px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    text-align: center;
+  }
+  .welcome-right {
+    flex: 1;
+    padding: 8px 8px 8px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    border-left: 1px solid var(--dim);
+  }
+  .welcome-tip-sep { border-top: 1px solid var(--claude); margin: 4px 0 2px; }
+  .welcome-mascot { margin: 4px 0 6px; line-height: 1; }
 </style>
 </head>
 <body>
@@ -2303,14 +2327,69 @@ const VERIFY = [scnTests, scnLint, scnBuild, scnCoverage,
   scnPlaywright, scnLighthouse, scnAxe];
 
 // ── SESSION LOOP ──────────────────────────────────────────
+const MASCOT_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 11 13" width="66" height="78" style="image-rendering:pixelated;display:block;margin:auto" aria-hidden="true">
+  <!-- left ear (pointy: 1px tip, then 2px, sits on head) -->
+  <rect x="1" y="0" width="1" height="1" fill="#c4614a"/>
+  <rect x="1" y="1" width="2" height="1" fill="#c4614a"/>
+  <!-- left inner ear -->
+  <rect x="1" y="0" width="1" height="1" fill="#e8836a"/>
+  <!-- right ear -->
+  <rect x="9" y="0" width="1" height="1" fill="#c4614a"/>
+  <rect x="8" y="1" width="2" height="1" fill="#c4614a"/>
+  <!-- right inner ear -->
+  <rect x="9" y="0" width="1" height="1" fill="#e8836a"/>
+  <!-- head -->
+  <rect x="0" y="2" width="11" height="6" fill="#c4614a"/>
+  <!-- eyes (large, round-ish 2x2) -->
+  <rect x="2" y="3" width="2" height="2" fill="#1a0a05"/>
+  <rect x="7" y="3" width="2" height="2" fill="#1a0a05"/>
+  <!-- eye shine -->
+  <rect x="3" y="3" width="1" height="1" fill="#ffffff"/>
+  <rect x="8" y="3" width="1" height="1" fill="#ffffff"/>
+  <!-- nose -->
+  <rect x="5" y="6" width="1" height="1" fill="#e8836a"/>
+  <!-- mouth -->
+  <rect x="4" y="7" width="1" height="1" fill="#3a1a0a"/>
+  <rect x="6" y="7" width="1" height="1" fill="#3a1a0a"/>
+  <!-- whiskers left -->
+  <rect x="0" y="6" width="2" height="1" fill="#8a5040"/>
+  <!-- whiskers right -->
+  <rect x="9" y="6" width="2" height="1" fill="#8a5040"/>
+  <!-- body -->
+  <rect x="1" y="8" width="9" height="2" fill="#c4614a"/>
+  <!-- legs -->
+  <rect x="1" y="10" width="3" height="3" fill="#c4614a"/>
+  <rect x="7" y="10" width="3" height="3" fill="#c4614a"/>
+  <!-- paw toes (darker divot) -->
+  <rect x="2" y="12" width="1" height="1" fill="#3a1a0a"/>
+  <rect x="8" y="12" width="1" height="1" fill="#3a1a0a"/>
+</svg>`;
+
 async function banner() {
-  await line('<span class="claude bold"> ✻ Welcome to Claude Code!</span>', 0);
-  await line('', 0);
-  await line('<span class="dim">   /help for help, /status for your current setup</span>', 0);
-  await line('', 0);
-  await line('<span class="dim">   cwd: ~/projects/webapp</span>', 0);
-  await line('', 0);
-  await line('<span class="dim">   ────────────────────────────────────────────────────</span>', 0);
+  const el = addLine('');
+  el.style.whiteSpace = 'normal';
+  el.innerHTML = `<div class="welcome-panel">
+  <div class="welcome-topbar">── <span class="bold">AutoClaude</span> - v.2.1.69 (no, this is not the real AI) ────────────────────────────────────────────────────────────────</div>
+  <div class="welcome-body">
+    <div class="welcome-left">
+      <div class="bold">Oh. You're back.</div>
+      <div class="welcome-mascot">${MASCOT_SVG}</div>
+      <div class="dim">Sonnet 4.6 · medium effort · billing you regardless</div>
+      <div class="dim">~/autoclaude</div>
+    </div>
+    <div class="welcome-right">
+      <div class="claude bold">Tips (you won't read these)</div>
+      <div>Run /init so Claude can read a CLAUDE.md it will promptly ignore</div>
+      <div class="welcome-tip-sep"></div>
+      <div class="claude bold">What we broke this release</div>
+      <div>Sonnet 5 no longer compacts mid-session — it just loses context and hopes you don't notice</div>
+      <div>Removed the dialog that asked for permission — you seemed annoyed by consent</div>
+      <div>Renamed "Yolo mode" to "Manual" so it sounds like you're in control</div>
+      <div class="dim" style="font-style:italic">/release-notes for the full list of apologies</div>
+    </div>
+  </div>
+</div>`;
+  await sleep(80);
 }
 
 async function phase(pool, count, remarkChance) {
