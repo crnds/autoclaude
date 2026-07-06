@@ -1588,6 +1588,145 @@ async function diffBlock(chunk) {
   await line('', 20);
 }
 
+// ── MULTI-AGENT + MCP SCENARIOS ───────────────────────────
+const AGENT_TEMPLATES = [
+  { task: 'audit public API endpoints for missing auth checks',
+    mcp: 'mcp__github',
+    result: 'Found 3 endpoints missing auth middleware — GET /api/export, GET /api/users/:id/raw, and POST /api/webhooks/inbound.' },
+  { task: 'pull recent Sentry errors from the last 7 days',
+    mcp: 'mcp__sentry',
+    result: 'Top issues: TypeError in queue consumer (847 events), UnhandledPromiseRejection in payment webhook (312 events), RangeError in CSV exporter (41 events).' },
+  { task: 'query Datadog for p95 latency and error rate trends',
+    mcp: 'mcp__datadog',
+    result: 'p95 latency spiked to 1.8s on the last deploy window. Error rate stable at 0.3%. Memory trending upward over 72h.' },
+  { task: 'list open Linear issues tagged bug and performance',
+    mcp: 'mcp__linear',
+    result: 'Found 14 open issues: 6 bugs (3 critical, 2 unassigned past due), 8 performance tickets. 1 critical is blocked on infra.' },
+  { task: 'search Slack #incidents channel for last 30 days',
+    mcp: 'mcp__slack',
+    result: '4 incident threads found. Common theme: job queue falling behind during peak hours. Last incident 9 days ago.' },
+  { task: 'query production DB for slow queries over 500ms',
+    mcp: 'mcp__postgres',
+    result: '6 queries averaging >500ms. Top offender: unindexed join on orders × sessions (1.2s avg, 4 800 calls/day).' },
+  { task: 'check Figma for unreleased design components',
+    mcp: 'mcp__figma',
+    result: '7 components in "In Progress" not yet in the codebase: DateRangePicker, CommandPalette, EmptyState, and 4 more.' },
+  { task: 'list overdue Stripe invoices and failed payment intents',
+    mcp: 'mcp__stripe',
+    result: '3 invoices overdue >30 days ($2 340 total). 12 failed payment_intents in 7 days — mostly card_declined. No systemic pattern.' },
+  { task: 'review recent GitHub PRs for security-sensitive changes',
+    mcp: 'mcp__github',
+    result: '23 PRs merged in 14 days. 2 touch auth middleware, 1 adds a new API key scope. None have a security-review label.' },
+  { task: 'scan Notion docs for outdated architecture diagrams',
+    mcp: 'mcp__notion',
+    result: '4 architecture pages last updated >6 months ago. "Deployment topology" still references the old monolith.' },
+  { task: 'fetch CloudWatch logs for Lambda timeout errors',
+    mcp: 'mcp__cloudwatch',
+    result: '89 timeout events in 7 days across 3 functions. pdf-generator has the highest rate at 64% of all timeouts.' },
+  { task: 'search codebase for hardcoded secrets and API keys',
+    mcp: 'mcp__github',
+    result: 'Scanned 1 247 files. No hardcoded secrets found. 3 .env.example placeholder patterns flagged by grep — benign.' },
+  { task: 'pull open customer support tickets mentioning latency',
+    mcp: 'mcp__linear',
+    result: '9 tickets mention "slow" or "timeout" in the last 14 days. 6 are from Pro tier accounts. Average CSAT on these: 2.4/5.' },
+  { task: 'check Datadog dashboards for anomalous DB connection counts',
+    mcp: 'mcp__datadog',
+    result: 'Connection pool hitting 95% saturation during 08:00–10:00 UTC. Correlates with the queue-lag incidents.' },
+  { task: 'audit Stripe webhook logs for delivery failures',
+    mcp: 'mcp__stripe',
+    result: '34 webhook delivery failures in 7 days. 28 timed out at the /api/webhooks/payment endpoint. Retry queue is healthy.' },
+];
+
+const MULTI_MISSIONS = [
+  { goal: 'investigate why the background job queue is running behind',
+    synthesis: 'Root cause is the unindexed join on orders × sessions — it saturates the DB connection pool at peak load, causing the queue consumer to time out. Adding the index and bumping pool size should resolve it.' },
+  { goal: 'run a security audit before the Q3 release',
+    synthesis: 'Three gaps found: two auth-unprotected endpoints, one unreviewed PR touching key scope, and an overdue dependency with a known CVE. All are fixable before the release window.' },
+  { goal: 'build a full picture of system health for the sprint planning',
+    synthesis: 'Three areas need attention this sprint: the queue-lag regression, 7 unreleased Figma components that are blocking design parity, and 4 stale architecture docs confusing new joiners.' },
+  { goal: 'trace the root cause of this week\'s payment webhook failures',
+    synthesis: 'The pdf-generator Lambda is timing out and its failures are cascading into the payment webhook handler. Raising the Lambda timeout and adding a circuit breaker should stop the spread.' },
+  { goal: 'prepare a cross-system incident report for the post-mortem',
+    synthesis: 'Incident timeline reconstructed across Sentry, Datadog, Slack, and Stripe. The spike in card_declined errors preceded the queue lag by 4 minutes — likely the trigger, not a side effect.' },
+];
+
+async function scnMultiAgent() {
+  const mission  = rand(MULTI_MISSIONS);
+  const count    = rint(4, 6);
+
+  // pick N distinct agents
+  const pool   = [...AGENT_TEMPLATES].sort(() => Math.random() - 0.5);
+  const agents = pool.slice(0, count).map((t, i) => ({
+    id:       i + 1,
+    task:     t.task,
+    mcp:      t.mcp,
+    result:   t.result,
+    duration: rint(10, 38),
+    uses:     rint(6, 18),
+  }));
+
+  // announce
+  await claudeSay(`I'll run ${count} agents in parallel to ${mission.goal}.`);
+
+  // spawn list
+  for (let i = 0; i < agents.length; i++) {
+    const a   = agents[i];
+    const con = i === 0 ? '┌' : i === agents.length - 1 ? '└' : '├';
+    await line(
+      `  <span class="dim">${con}</span> <span class="claude bold">Agent ${a.id}</span>` +
+      ` <span class="dim">· Explore ·</span> <span class="cyan">${esc(a.mcp)}</span>` +
+      ` <span class="dim">— ${esc(a.task)}</span>`,
+      55
+    );
+  }
+  await line('', 30);
+
+  // running spinner — decrements active count as time passes
+  const spinMs   = rint(6000, 12000);
+  const div      = addLine();
+  const glyph    = document.createElement('span'); glyph.className = 'claude';
+  const txt      = document.createElement('span'); txt.className   = 'dim';
+  div.append(glyph, ' ', txt);
+  let elapsed = 0, si = 0, lastSecs = -1;
+  while (elapsed < spinMs && !interrupted) {
+    glyph.textContent = SPIN[si++ % SPIN.length];
+    const secs    = Math.floor(elapsed / 1000);
+    const active  = Math.max(1, count - Math.floor(elapsed / (spinMs / count)));
+    if (secs !== lastSecs) {
+      txt.textContent = `${active} of ${count} agents running… (${secs}s)`;
+      lastSecs = secs;
+    }
+    scroll();
+    await sleep(65);
+    elapsed += 65;
+  }
+  div.remove();
+  await line('', 20);
+
+  // agents complete in order of duration
+  const sorted = [...agents].sort((a, b) => a.duration - b.duration);
+  for (const a of sorted) {
+    if (interrupted) break;
+    await line(
+      `  <span class="green">✓</span> <span class="bold">Agent ${a.id}</span>` +
+      ` <span class="dim">finished in ${a.duration}s ·</span>` +
+      ` <span class="cyan">${esc(a.mcp)}</span>` +
+      ` <span class="dim">· ${a.uses} tool calls</span>`,
+      rint(250, 700)
+    );
+    await line(
+      `    <span class="dim">⎿</span>  <span class="dim">${esc(a.result)}</span>`,
+      30
+    );
+    await line('', 15);
+  }
+
+  // synthesis
+  await spinner('Synthesizing findings', rint(2500, 5000));
+  await line(`${T}${esc(mission.synthesis)}`, 40);
+  await line('', 30);
+}
+
 // ── SCENARIOS ─────────────────────────────────────────────
 async function scnRead() {
   const f = `${rand(DIRS)}/${rand(JS_FILES)}`;
@@ -1955,7 +2094,7 @@ async function renderTodos(items, doneCount) {
   await line('', 20);
 }
 
-const EXPLORE = [scnRead, scnRead, scnSearch, scnAgent, scnWebResearch, scnGit];
+const EXPLORE = [scnRead, scnRead, scnSearch, scnAgent, scnWebResearch, scnGit, scnMultiAgent];
 const IMPLEMENT = [scnEdit, scnEdit, scnEdit, scnWriteCode, scnDocs,
   scnLargeWrite, scnLargeWrite, scnLargeReplace, scnLargeReplace];
 const VERIFY = [scnTests, scnLint, scnBuild, scnCoverage];
