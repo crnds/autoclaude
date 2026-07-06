@@ -320,8 +320,8 @@ hiddenInput.addEventListener('blur', () => {
   if (inputMode) deactivateInputMode();
 });
 
-// click anywhere on the terminal area to enter input mode
-document.querySelector('.window').addEventListener('click', () => {
+// click the promptbox to enter input mode
+promptbox.addEventListener('click', () => {
   if (!inputMode) activateInputMode();
 });
 
