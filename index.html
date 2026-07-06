@@ -1,0 +1,1078 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>claude — ~/projects/webapp — 120×40</title>
+<style>
+  :root {
+    --bg: #1c1c1e;
+    --term-bg: #161618;
+    --text: #e8e8e6;
+    --dim: #8e8e93;
+    --green: #32d74b;
+    --red: #ff6961;
+    --yellow: #ffd60a;
+    --blue: #64a8ff;
+    --cyan: #66d9e8;
+    --magenta: #da8fff;
+    --orange: #ff9f0a;
+    --claude: #d97757;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    height: 100%;
+    background: var(--term-bg);
+    font-family: "SF Mono", "Menlo", "Monaco", "Consolas", monospace;
+    overflow: hidden;
+  }
+
+  .window {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--term-bg);
+  }
+
+  /* ── TERMINAL ──────────────────────────────────────────── */
+  .terminal {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 12px 16px 18px;
+    font-size: 12.5px;
+    line-height: 1.45;
+    color: var(--text);
+    text-shadow: 0 0 2px rgba(232,232,230,0.18);
+    scroll-behavior: auto;
+  }
+  .terminal::-webkit-scrollbar { width: 8px; }
+  .terminal::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.14);
+    border-radius: 4px;
+  }
+  .terminal::-webkit-scrollbar-track { background: transparent; }
+
+  .line {
+    white-space: pre-wrap;
+    word-break: break-word;
+    min-height: 1.45em;
+    contain: content;   /* isolate layout/paint per line */
+  }
+
+  /* colours */
+  .green   { color: var(--green); }
+  .red     { color: var(--red); }
+  .yellow  { color: var(--yellow); }
+  .blue    { color: var(--blue); }
+  .cyan    { color: var(--cyan); }
+  .magenta { color: var(--magenta); }
+  .orange  { color: var(--orange); }
+  .dim     { color: var(--dim); text-shadow: none; }
+  .claude  { color: var(--claude); }
+  .bold    { font-weight: 700; }
+  .add     { color: var(--green); background: rgba(50,215,75,0.09); display: inline-block; width: 100%; }
+  .del     { color: var(--red);   background: rgba(255,105,97,0.09); display: inline-block; width: 100%; }
+
+  .cursor {
+    display: inline-block;
+    width: 7px;
+    height: 1.15em;
+    background: #d8d8d4;
+    vertical-align: text-bottom;
+    animation: blink 1.06s steps(1) infinite;
+    box-shadow: 0 0 4px rgba(216,216,212,0.5);
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* ── INPUT BAR ─────────────────────────────────────────── */
+  .inputbar {
+    flex: 0 0 auto;
+    font-size: 12.5px;
+    line-height: 1.45;
+    color: var(--text);
+    padding: 0 16px 10px;
+    user-select: none;
+  }
+  .tokens {
+    text-align: right;
+    color: var(--dim);
+    font-size: 11.5px;
+    padding: 2px 4px 4px;
+    text-shadow: none;
+  }
+  .promptbox {
+    border-top: 1px solid rgba(255,255,255,0.22);
+    border-bottom: 1px solid rgba(255,255,255,0.22);
+    padding: 8px 6px;
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+  .prompt-char { color: var(--text); font-weight: 700; }
+  .statusline {
+    padding: 7px 6px 0 22px;
+    color: var(--dim);
+    text-shadow: none;
+  }
+  .statusline .mode { color: var(--yellow); font-weight: 700; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  }
+  @media (max-width: 768px) {
+    .terminal { font-size: 11px; }
+  }
+</style>
+</head>
+<body>
+<div class="window">
+  <div class="terminal" id="term"></div>
+  <div class="inputbar">
+    <div class="tokens" id="tokens">0 tokens</div>
+    <div class="promptbox">
+      <span class="prompt-char">❯</span><span id="inputText"></span><span class="cursor"></span>
+    </div>
+    <div class="statusline"><span class="mode">⏵⏵ auto mode on</span> (shift+tab to cycle) · ← for agents<span id="speedInfo"></span></div>
+  </div>
+</div>
+
+<script>
+// ── SETUP ─────────────────────────────────────────────────
+const term = document.getElementById('term');
+const MAX_LINES = 250;          // DOM cap for endless sessions
+const tokensEl = document.getElementById('tokens');
+let tokenCount = rint2(800, 4000);
+function rint2(lo, hi) { return lo + Math.floor(Math.random() * (hi - lo + 1)); }
+function bumpTokens(n) {
+  tokenCount += n;
+  tokensEl.textContent = tokenCount >= 1000
+    ? (tokenCount / 1000).toFixed(1) + 'k tokens'
+    : tokenCount + ' tokens';
+}
+
+const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const rand = a => a[Math.floor(Math.random() * a.length)];
+const rint = (lo, hi) => lo + Math.floor(Math.random() * (hi - lo + 1));
+const jitter = (ms, pct = 0.4) => ms * (1 - pct + Math.random() * pct * 2);
+
+// ── PLAYBACK CONTROLS (↑/↓ speed, Enter pause) ────────────
+let speedMult = 1;
+let paused = false;
+const SPEED_STEPS = [0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8];
+
+const rawSleep = ms => new Promise(r => setTimeout(r, ms));
+
+// suspend the whole simulation while the tab is hidden — no timers
+// churning, no DOM writes, no allocation while nobody is watching
+let hiddenTab = document.hidden;
+document.addEventListener('visibilitychange', () => { hiddenTab = document.hidden; });
+
+// all animation timing funnels through here, so speed changes,
+// pause, and tab visibility apply instantly, even mid-spinner
+async function sleep(baseMs) {
+  let remaining = baseMs;
+  while (remaining > 0) {
+    if (paused || hiddenTab) { await rawSleep(250); continue; }
+    const chunk = Math.min(60, remaining / speedMult);
+    await rawSleep(chunk);
+    remaining -= chunk * speedMult;
+  }
+}
+
+let statusHideTimer = null;
+function updateStatusline() {
+  const speedEl = document.getElementById('speedInfo');
+  clearTimeout(statusHideTimer);
+  if (paused) {
+    // stays visible for the whole pause
+    speedEl.innerHTML = ' · <span class="red bold">⏸ paused — enter to resume</span>';
+    return;
+  }
+  speedEl.innerHTML = ` · <span class="cyan">${speedMult}× speed (↑/↓)</span> · <span class="cyan">${fontSize}px (+/−)</span>`;
+  statusHideTimer = setTimeout(() => { speedEl.innerHTML = ''; }, 2500);
+}
+
+// font size (+ / - keys)
+const FONT_MIN = 8, FONT_MAX = 28;
+let fontSize = 12.5;
+function applyFontSize() {
+  document.querySelector('.terminal').style.fontSize = fontSize + 'px';
+  document.querySelector('.inputbar').style.fontSize = fontSize + 'px';
+  scroll();
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+    e.preventDefault();
+    const i = SPEED_STEPS.indexOf(speedMult);
+    const next = e.key === 'ArrowUp' ? Math.min(i + 1, SPEED_STEPS.length - 1) : Math.max(i - 1, 0);
+    speedMult = SPEED_STEPS[next];
+    updateStatusline();
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    paused = !paused;
+    updateStatusline();
+  } else if (e.key === '+' || e.key === '=') {
+    e.preventDefault();
+    fontSize = Math.min(FONT_MAX, fontSize + 1);
+    applyFontSize(); updateStatusline();
+  } else if (e.key === '-' || e.key === '_') {
+    e.preventDefault();
+    fontSize = Math.max(FONT_MIN, fontSize - 1);
+    applyFontSize(); updateStatusline();
+  }
+});
+
+function trim() {
+  while (term.children.length > MAX_LINES) term.removeChild(term.firstChild);
+}
+
+// batch scrolls into one per frame instead of forcing a reflow per line
+let scrollQueued = false;
+function scroll() {
+  if (scrollQueued) return;
+  scrollQueued = true;
+  requestAnimationFrame(() => {
+    scrollQueued = false;
+    term.scrollTop = term.scrollHeight;
+  });
+}
+
+function addLine(html = '') {
+  const div = document.createElement('div');
+  div.className = 'line';
+  div.innerHTML = html;
+  term.appendChild(div);
+  bumpTokens(rint2(4, 60));
+  trim(); scroll();
+  return div;
+}
+
+// print a line, optionally after a delay
+async function line(html = '', delay = 15) {
+  if (delay) await sleep(jitter(delay));
+  return addLine(html);
+}
+
+// ── SPINNERS & PROGRESS ───────────────────────────────────
+const SPIN = ['✢','✳','✶','✻','✽','✻','✶','✳'];
+const THINK_WORDS = ['Thinking','Pondering','Reasoning','Musing','Considering',
+  'Deliberating','Contemplating','Percolating','Ruminating','Synthesizing',
+  'Simmering','Cogitating','Brewing','Vibing','Noodling'];
+
+async function spinner(label, ms) {
+  // build the nodes once and mutate textContent per tick — no HTML
+  // re-parsing or node churn while the spinner runs
+  const div = addLine();
+  const glyph = document.createElement('span');
+  glyph.className = 'claude';
+  const txt = document.createElement('span');
+  txt.className = 'dim';
+  div.append(glyph, ' ', txt);
+  let elapsed = 0, i = 0, lastSecs = -1;
+  while (elapsed < ms) {
+    glyph.textContent = SPIN[i++ % SPIN.length];
+    const secs = Math.floor(elapsed / 1000);
+    if (secs !== lastSecs) {
+      txt.textContent = `${label}… (${secs}s · esc to interrupt)`;
+      lastSecs = secs;
+    }
+    scroll();
+    await sleep(65);
+    elapsed += 65;
+  }
+  div.remove();
+}
+
+async function progressBar(label, ms, cls = 'green') {
+  const div = addLine();
+  const width = 26;
+  const labelSpan = document.createElement('span');
+  labelSpan.className = 'dim';
+  labelSpan.textContent = `  ${label} `;
+  const barSpan = document.createElement('span');
+  barSpan.className = cls;
+  const pctSpan = document.createElement('span');
+  pctSpan.className = 'dim';
+  div.append(labelSpan, barSpan, ' ', pctSpan);
+  let elapsed = 0, lastFilled = -1;
+  while (true) {
+    const pct = Math.min(1, elapsed / ms);
+    const filled = Math.round(pct * width);
+    if (filled !== lastFilled) {
+      barSpan.textContent = `[${'█'.repeat(filled)}${'░'.repeat(width - filled)}]`;
+      lastFilled = filled;
+    }
+    pctSpan.textContent = `${Math.round(pct * 100)}%`;
+    scroll();
+    if (pct >= 1) break;
+    await sleep(40);
+    elapsed += 40;
+  }
+  await sleep(80);
+}
+
+// ── FAKE DATA POOLS ───────────────────────────────────────
+const DIRS = ['.', 'src', 'src/components', 'src/utils', 'assets', 'js', 'css', 'pages'];
+
+const JS_FILES = ['app.js','index.html','style.css','chart.js','theme.js','carousel.js',
+  'dashboard.html','pricing.html','components.css','layout.css','animations.css',
+  'formatters.js','api.js','search.js','modal.js','tabs.js','gallery.html',
+  'form-validation.js','dropdown.js','tooltip.css','navbar.css','settings.html'];
+
+const PY_FILES = ['fetch_data.py','pipeline.py','models.py','tasks.py','report.py',
+  'seed_db.py','export_csv.py','sync_users.py'];
+
+const TEST_FILES = ['auth.test.ts','apiClient.test.ts','validators.test.ts',
+  'useFetch.test.tsx','Dashboard.test.tsx','rateLimiter.test.ts','queue.test.ts',
+  'formatters.test.ts','webhooks.test.ts','paymentService.test.ts'];
+
+const FUNCS = ['parseToken','refreshSession','buildQuery','normalizeUser','debounce',
+  'retryWithBackoff','formatCurrency','validateEmail','mergeConfig','hashPassword',
+  'serializeOrder','computeTotals','resolveLocale','sanitizeInput','batchInsert',
+  'invalidateCache','toSlug','groupByDate','withTimeout','emitMetric'];
+
+const PKGS = ['zod','date-fns','pino','fastify','express','pg','prisma','vitest',
+  'react-query','axios','ioredis','dotenv','jsonwebtoken','bcryptjs','uuid'];
+
+const BRANCHES = ['feat/user-settings','fix/session-expiry','refactor/api-client',
+  'feat/csv-export','fix/rate-limit-headers','chore/upgrade-deps','feat/dark-mode',
+  'fix/timezone-offset','feat/webhook-retries','perf/query-batching'];
+
+const PROMPTS = [
+  'fix the signup form validation — errors should show inline under each field',
+  'the chart flickers when switching tabs, find and fix the re-render bug',
+  'the mobile nav menu does not close when a link is tapped',
+  'dark mode toggle is not persisting after page reload',
+  'the hero section overflows horizontally on small screens',
+  'fix the carousel — it skips a slide when swiping fast',
+  'the modal traps scroll but never releases it on close',
+  'debounce the search input, it fires a request on every keystroke',
+  'the sticky header jumps 2px when scrolling past the hero',
+  'grid cards have inconsistent heights when titles wrap to two lines',
+  'the price formatter shows NaN when the API returns a string',
+  'focus ring is missing on the dropdown items, fix keyboard navigation',
+  'fix the fade-in animation — it replays every time you scroll back up',
+  'the tooltip clips outside the viewport near the right edge',
+  'form submit button stays disabled after a failed request',
+  'the tab component loses its active state on browser back',
+  'lazy-loaded images cause layout shift, reserve their space',
+  'the countdown timer drifts by a few seconds every minute',
+  'localStorage quota error crashes the app on Safari private mode',
+  'the theme flashes light for a frame before dark mode applies',
+  'clicking outside the dropdown should close it, but it does not',
+  'the table sort arrow points the wrong way on the second click',
+  'CSS transition on the accordion is janky, it animates height directly',
+  'the copy-to-clipboard button gives no feedback when it succeeds',
+];
+
+const CLAUDE_REMARKS = [
+  "I'll start by looking at how this is currently implemented.",
+  "Let me find where this logic lives first.",
+  "I can see the issue — let me trace it through the call path.",
+  "Good, the structure is clear. I'll make the change now.",
+  "Found it. The bug is a stale closure capturing the old state.",
+  "The root cause is that the effect re-subscribes on every render.",
+  "This duplicates logic that already exists in the utils — I'll reuse it.",
+  "The query is doing a full table scan; an index on created_at will fix it.",
+  "I'll write the tests first so we can verify the fix.",
+  "That's done. Now let me run the tests to confirm nothing broke.",
+  "The types check out. Running the full suite to be safe.",
+  "One edge case remains: empty input. Handling that now.",
+  "The retry logic needs jitter to avoid thundering herd — adding it.",
+  "All tests pass. Let me also update the docs to match.",
+  "I'll add a migration for the schema change and keep it reversible.",
+];
+
+const SUMMARIES = [
+  ['Added validation with inline errors on all four signup fields.',
+   'Empty, format, and length cases are covered by 12 new tests.'],
+  ['Fixed the flicker by memoizing the chart config and destroying the old',
+   'instance before re-render. Verified across tab switches.'],
+  ['The api client now retries idempotent requests 3× with exponential',
+   'backoff and a shared AbortController timeout of 10s.'],
+  ['Query time dropped from 840ms to 12ms after adding the composite index',
+   'and removing the N+1 in the serializer.'],
+  ['Dark mode persists via localStorage and respects prefers-color-scheme',
+   'on first visit. All colors moved to CSS custom properties.'],
+  ['Image size reduced from 1.2GB to 187MB using a multi-stage build and',
+   'node:20-alpine. Build time is 40% faster too.'],
+  ['Pagination is in with keyset cursors — stable under concurrent inserts,',
+   'and the UI shows 25 rows per page with prefetch on hover.'],
+  ['The flaky test was racing the debounce timer. Switched to fake timers',
+   'and it has passed 200 consecutive runs.'],
+  ['README now documents the retry schedule, dead-letter behavior, and the',
+   'signature verification steps with curl examples.'],
+  ['Migration applied cleanly up and down. The new column backfills from',
+   'the sessions audit log in batches of 1000.'],
+];
+
+// ── OUTPUT HELPERS (Claude Code style) ────────────────────
+const T = '<span class="claude">⏺</span> ';           // tool / assistant bullet
+const R = '  <span class="dim">⎿</span>  ';            // result connector
+
+async function toolCall(name, arg) {
+  await line(`${T}<span class="bold">${esc(name)}</span><span class="dim">(${esc(arg)})</span>`, 90);
+}
+async function toolResult(text, cls = 'dim') {
+  await line(`${R}<span class="${cls}">${esc(text)}</span>`, 70);
+}
+async function claudeSay(text) {
+  await spinner(rand(THINK_WORDS), rint(400, 1200));
+  await line(`${T}${esc(text)}`, 40);
+  await line('', 20);
+}
+
+async function taskHeader(text) {
+  await line('', 60);
+  await line(`<span class="claude bold">✻</span> <span class="bold">Task:</span> ${esc(text)}`, 40);
+  await line('', 40);
+}
+
+// each chunk: a long block of surrounding code with the fixed line in the middle
+const EDIT_CHUNKS = [
+  { file: 'js/app.js', before: [
+      'function renderCards(items) {',
+      '  const frag = document.createDocumentFragment();',
+      '  for (const item of items) {',
+      "    const card = document.createElement('div');",
+      "    card.className = 'stat-card';" ],
+    del: '    card.innerHTML = item.title;',
+    add: '    card.textContent = item.title;',
+    after: [
+      '    card.addEventListener("click", () => openDetail(item.id));',
+      '    frag.appendChild(card);',
+      '  }',
+      '  list.replaceChildren(frag);',
+      '}' ] },
+  { file: 'js/search.js', before: [
+      'const input = document.querySelector("#search");',
+      'const results = document.querySelector(".search-results");',
+      '',
+      'input.addEventListener("input", () => {' ],
+    del: '  fetchResults(input.value);',
+    add: '  clearTimeout(STATE.searchTimer);\n    STATE.searchTimer = setTimeout(() => fetchResults(input.value), 300);',
+    after: [
+      '});',
+      '',
+      'async function fetchResults(q) {',
+      '  if (!q.trim()) { results.hidden = true; return; }',
+      '  const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);',
+      '  renderResults(await res.json());',
+      '}' ] },
+  { file: 'js/theme.js', before: [
+      'const THEME_KEY = "webapp_v1_theme";',
+      '',
+      'function applyTheme(theme) {',
+      '  document.body.dataset.theme = theme;' ],
+    del: '  localStorage.setItem("theme", theme);',
+    add: '  localStorage.setItem(THEME_KEY, theme);',
+    after: [
+      '}',
+      '',
+      'toggleBtn.addEventListener("click", () => {',
+      '  const next = document.body.dataset.theme === "light" ? "dark" : "light";',
+      '  applyTheme(next);',
+      '});' ] },
+  { file: 'js/formatters.js', before: [
+      'function fmtPrice(value, currency = "USD") {',
+      '  // API sometimes returns numeric strings' ],
+    del: '  return value.toLocaleString("en-US", { style: "currency", currency });',
+    add: '  const n = Number(value);\n    if (!Number.isFinite(n)) return "—";\n    return n.toLocaleString("en-US", { style: "currency", currency });',
+    after: [
+      '}',
+      '',
+      'function fmtDate(iso) {',
+      '  return new Date(iso).toLocaleDateString("en-GB", {',
+      '    day: "numeric", month: "short", year: "numeric",',
+      '  });',
+      '}' ] },
+  { file: 'js/modal.js', before: [
+      'function closeModal() {',
+      '  overlay.classList.remove("open");',
+      '  modal.setAttribute("aria-hidden", "true");' ],
+    del: '  // TODO: restore scroll',
+    add: '  document.body.style.overflow = "";\n    lastFocused?.focus();',
+    after: [
+      '}',
+      '',
+      'overlay.addEventListener("click", (e) => {',
+      '  if (e.target === overlay) closeModal();',
+      '});',
+      '',
+      'document.addEventListener("keydown", (e) => {',
+      '  if (e.key === "Escape") closeModal();',
+      '});' ] },
+  { file: 'css/layout.css', before: [
+      '.card-grid {',
+      '  display: grid;',
+      '  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));',
+      '  gap: 20px;',
+      '}',
+      '',
+      '.stat-card {',
+      '  background: var(--surface);',
+      '  border: 1px solid var(--border);',
+      '  border-radius: var(--radius);' ],
+    del: '  height: 220px;',
+    add: '  min-height: 220px;\n    display: flex;\n    flex-direction: column;',
+    after: [
+      '  padding: 20px;',
+      '  box-shadow: var(--shadow);',
+      '}',
+      '',
+      '.stat-card h3 {',
+      '  font-size: clamp(1rem, 2vw, 1.25rem);',
+      '}' ] },
+  { file: 'css/navbar.css', before: [
+      '.site-header {',
+      '  position: sticky;',
+      '  top: 0;',
+      '  z-index: 100;',
+      '  background: var(--bg);' ],
+    del: '  border-bottom: 2px solid transparent;',
+    add: '  border-bottom: 1px solid var(--border);\n    backdrop-filter: blur(12px);',
+    after: [
+      '  transition: background 0.2s ease;',
+      '}',
+      '',
+      '.site-header.scrolled {',
+      '  background: rgba(8, 9, 13, 0.85);',
+      '}' ] },
+  { file: 'css/animations.css', before: [
+      '.accordion-body {',
+      '  overflow: hidden;' ],
+    del: '  transition: height 0.3s ease;',
+    add: '  display: grid;\n    grid-template-rows: 0fr;\n    transition: grid-template-rows 0.25s ease;',
+    after: [
+      '}',
+      '',
+      '.accordion.open .accordion-body {',
+      '  grid-template-rows: 1fr;',
+      '}',
+      '',
+      '@media (prefers-reduced-motion: reduce) {',
+      '  .accordion-body { transition-duration: 0.01ms; }',
+      '}' ] },
+  { file: 'index.html', before: [
+      '  <section class="gallery">',
+      '    <h2>Latest work</h2>',
+      '    <div class="gallery-grid">' ],
+    del: '      <img src="assets/shot-1.jpg" loading="lazy">',
+    add: '      <img src="assets/shot-1.jpg" alt="Dashboard redesign" width="640" height="400" loading="lazy">',
+    after: [
+      '      <figcaption>Analytics dashboard, 2026</figcaption>',
+      '    </div>',
+      '  </section>',
+      '',
+      '  <footer class="site-footer">',
+      '    <nav aria-label="Footer">',
+      '      <a href="/about.html">About</a>',
+      '    </nav>',
+      '  </footer>' ] },
+  { file: 'pages/pricing.html', before: [
+      '  <div class="plan-card featured">',
+      '    <h3>Pro</h3>',
+      '    <p class="price"><span class="amount">$12</span>/month</p>',
+      '    <ul class="feature-list">',
+      '      <li>Unlimited projects</li>',
+      '      <li>Priority support</li>',
+      '    </ul>' ],
+    del: '    <div class="cta" onclick="checkout()">Get started</div>',
+    add: '    <button class="cta" type="button" aria-label="Get started with the Pro plan">Get started</button>',
+    after: [
+      '  </div>',
+      '</section>',
+      '',
+      '<script src="../js/checkout.js"><\/script>' ] },
+  { file: 'js/dropdown.js', before: [
+      'button.addEventListener("click", () => {',
+      '  menu.classList.toggle("open");',
+      '  button.setAttribute("aria-expanded", menu.classList.contains("open"));',
+      '});' ],
+    del: '// close on outside click — not working',
+    add: 'document.addEventListener("pointerdown", (e) => {\n    if (!menu.contains(e.target) && !button.contains(e.target)) {\n      menu.classList.remove("open");\n      button.setAttribute("aria-expanded", "false");\n    }\n  });',
+    after: [
+      '',
+      'menu.addEventListener("keydown", (e) => {',
+      '  if (e.key === "ArrowDown") focusNext(1);',
+      '  if (e.key === "ArrowUp") focusNext(-1);',
+      '});' ] },
+  { file: 'js/carousel.js', before: [
+      'track.addEventListener("pointerup", (e) => {',
+      '  const delta = e.clientX - STATE.dragStartX;',
+      '  const threshold = slideWidth * 0.2;' ],
+    del: '  STATE.index += delta < 0 ? 1 : -1;',
+    add: '  if (Math.abs(delta) > threshold) {\n      STATE.index = clamp(STATE.index + (delta < 0 ? 1 : -1), 0, slides.length - 1);\n    }',
+    after: [
+      '  track.style.transform = `translateX(${-STATE.index * slideWidth}px)`;',
+      '  updateDots();',
+      '});',
+      '',
+      'function clamp(v, lo, hi) {',
+      '  return Math.min(hi, Math.max(lo, v));',
+      '}' ] },
+];
+
+async function diffBlock(chunk) {
+  await toolCall('Update', chunk.file);
+  const addCount = chunk.add.split('\n').length;
+  await toolResult(`Updated ${chunk.file} with ${addCount} addition${addCount>1?'s':''} and 1 removal`);
+  let ln = rint(8, 180);
+  const ctx = async (text) => {
+    await line(`       <span class="dim">${String(ln++).padStart(3)}</span>  <span class="dim">${esc(text)}</span>`, 22);
+  };
+  for (const t of chunk.before) await ctx(t);
+  await line(`       <span class="dim">${String(ln).padStart(3)}</span> <span class="del">-  ${esc(chunk.del)}</span>`, 45);
+  for (const a of chunk.add.split('\n')) {
+    await line(`       <span class="dim">${String(ln++).padStart(3)}</span> <span class="add">+  ${esc(a)}</span>`, 45);
+  }
+  for (const t of chunk.after) await ctx(t);
+  await line('', 20);
+}
+
+// ── SCENARIOS ─────────────────────────────────────────────
+async function scnRead() {
+  const f = `${rand(DIRS)}/${rand(JS_FILES)}`;
+  await toolCall('Read', f);
+  await toolResult(`Read ${rint(40, 480)} lines`);
+}
+
+async function scnSearch() {
+  const fn = rand(FUNCS);
+  if (Math.random() < 0.5) {
+    await toolCall('Grep', `pattern: "${fn}"`);
+    await toolResult(`Found ${rint(2, 19)} matches across ${rint(1, 6)} files`);
+  } else {
+    await toolCall('Glob', `**/*.{ts,tsx}`);
+    await toolResult(`Found ${rint(12, 96)} files`);
+  }
+}
+
+async function scnEdit() {
+  const chunk = rand(EDIT_CHUNKS);
+  // read the file first, like a real session
+  if (Math.random() < 0.5) {
+    await toolCall('Read', chunk.file);
+    await toolResult(`Read ${rint(80, 460)} lines`);
+  }
+  await diffBlock(chunk);
+}
+
+async function scnWrite() {
+  const isTest = Math.random() < 0.4;
+  const f = isTest ? `tests/${rand(TEST_FILES)}` : `${rand(DIRS)}/${rand(JS_FILES)}`;
+  await toolCall('Write', f);
+  await toolResult(`Wrote ${rint(28, 210)} lines to ${f}`, 'green');
+}
+
+async function scnTests() {
+  await toolCall('Bash', 'npx vitest run --reporter=dot');
+  await spinner('Running tests', rint(600, 1400));
+  const files = rint(4, 14), tests = rint(18, 160);
+  if (Math.random() < 0.22) {
+    const failed = rint(1, 3);
+    await toolResult(`Test Files  ${files - 1} passed | 1 failed (${files})`, 'red');
+    await line(`${R}<span class="red">✗ ${esc(rand(TEST_FILES))} › ${esc(rand(FUNCS))} handles empty input</span>`, 50);
+    await line(`${R}<span class="dim">  AssertionError: expected undefined to deeply equal { ok: false }</span>`, 40);
+    await line('', 20);
+    await claudeSay('One test failed — the empty-input branch returns undefined. Fixing it.');
+    await scnEdit();
+    await toolCall('Bash', 'npx vitest run --reporter=dot');
+    await spinner('Re-running tests', rint(500, 1000));
+    await toolResult(`Test Files  ${files} passed (${files})`, 'green');
+    await toolResult(`     Tests  ${tests + failed} passed (${tests + failed})  ·  ${(Math.random()*3+0.8).toFixed(2)}s`, 'green');
+  } else {
+    await toolResult(`Test Files  ${files} passed (${files})`, 'green');
+    await toolResult(`     Tests  ${tests} passed (${tests})  ·  ${(Math.random()*3+0.8).toFixed(2)}s`, 'green');
+  }
+}
+
+async function scnTypecheck() {
+  await toolCall('Bash', 'npx tsc --noEmit');
+  await spinner('Type-checking', rint(500, 1100));
+  if (Math.random() < 0.25) {
+    const f = `${rand(DIRS)}/${rand(JS_FILES)}`;
+    await line(`${R}<span class="red">${esc(f)}(${rint(10,200)},${rint(3,40)}): error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'string'.</span>`, 50);
+    await claudeSay('A strict-null error slipped in — adding a guard.');
+    await scnEdit();
+    await toolCall('Bash', 'npx tsc --noEmit');
+    await spinner('Type-checking', rint(400, 900));
+    await toolResult('No errors found', 'green');
+  } else {
+    await toolResult('No errors found', 'green');
+  }
+}
+
+async function scnLint() {
+  await toolCall('Bash', 'npx eslint src --fix');
+  await spinner('Linting', rint(400, 900));
+  if (Math.random() < 0.3) {
+    await toolResult(`${rint(1,4)} warnings (0 errors) — ${rint(1,3)} auto-fixed`, 'yellow');
+  } else {
+    await toolResult('Clean — no problems found', 'green');
+  }
+}
+
+async function scnGit() {
+  const kind = rand(['status', 'branch', 'log']);
+  if (kind === 'status') {
+    await toolCall('Bash', 'git status --short');
+    const n = rint(1, 5);
+    for (let i = 0; i < n; i++)
+      await line(`${R}<span class="yellow"> M ${esc(rand(DIRS))}/${esc(rand(JS_FILES))}</span>`, 40);
+  } else if (kind === 'branch') {
+    const b = rand(BRANCHES);
+    await toolCall('Bash', `git checkout -b ${b}`);
+    await toolResult(`Switched to a new branch '${b}'`, 'green');
+  } else if (kind === 'log') {
+    await toolCall('Bash', 'git log --oneline -3');
+    const msgs = ['fix flaky debounce test', 'add keyset pagination', 'wire up redis cache',
+      'harden webhook signature check', 'bump deps', 'extract useFetch hook'];
+    for (let i = 0; i < 3; i++)
+      await line(`${R}<span class="yellow">${Math.random().toString(16).slice(2,9)}</span> <span class="dim">${esc(rand(msgs))}</span>`, 40);
+  } else {
+    await scnGitCommit();
+  }
+}
+
+async function scnGitCommit() {
+  const msgs = [
+    'feat: add debounced search with keyboard navigation',
+    'fix: destroy chart instance before re-render to stop flicker',
+    'refactor: unify fetch logic behind fetchJSON wrapper',
+    'test: cover rate limiter burst and refill behavior',
+    'perf: batch inserts and add composite index on orders',
+    'docs: document webhook retry schedule and DLQ behavior',
+    'chore: multi-stage docker build, image 1.2GB → 187MB',
+    'fix: use UTC when formatting invoice dates',
+  ];
+  await toolCall('Bash', 'git add -A && git commit');
+  const hash = Math.random().toString(16).slice(2, 9);
+  await toolResult(`[${rand(BRANCHES)} ${hash}] ${rand(msgs)}`, 'green');
+  await toolResult(`${rint(1,7)} files changed, ${rint(8,240)} insertions(+), ${rint(0,90)} deletions(-)`);
+}
+
+async function scnBuild() {
+  await toolCall('Bash', 'npm run build');
+  await spinner('Building', rint(500, 1100));
+  await progressBar('bundling', rint(700, 1400), 'cyan');
+  await toolResult(`✓ built in ${(Math.random()*6+1.5).toFixed(2)}s`, 'green');
+  await line(`${R}<span class="dim">dist/assets/index-${Math.random().toString(36).slice(2,10)}.js  <span class="cyan">${rint(80,420)}.${rint(10,99)} kB</span> │ gzip: ${rint(28,140)}.${rint(10,99)} kB</span>`, 50);
+}
+
+async function scnInstall() {
+  const pkg = rand(PKGS);
+  await toolCall('Bash', `npm install ${pkg}`);
+  await progressBar('resolving packages', rint(600, 1200), 'magenta');
+  await toolResult(`added ${rint(1, 24)} packages, audited ${rint(200, 900)} packages in ${rint(2, 9)}s`, 'green');
+  if (Math.random() < 0.3)
+    await line(`${R}<span class="yellow">${rint(1,3)} moderate severity vulnerabilities — run npm audit for details</span>`, 50);
+}
+
+async function scnDocker() {
+  await toolCall('Bash', 'docker build -t webapp:dev .');
+  const steps = ['FROM node:20-alpine AS build', 'COPY package*.json ./', 'RUN npm ci',
+    'COPY . .', 'RUN npm run build', 'FROM node:20-alpine', 'COPY --from=build /app/dist ./dist'];
+  for (let i = 0; i < steps.length; i++) {
+    await line(`${R}<span class="blue">[${i+1}/${steps.length}]</span> <span class="dim">${esc(steps[i])}</span>`, rint(50, 200));
+  }
+  await toolResult(`Successfully built ${Math.random().toString(16).slice(2,14)} (${rint(120,240)}MB)`, 'green');
+}
+
+async function scnSQL() {
+  const stmts = [
+    'CREATE INDEX CONCURRENTLY idx_orders_user_created ON orders (user_id, created_at DESC);',
+    'ALTER TABLE sessions ADD COLUMN last_seen_at timestamptz;',
+    'UPDATE users SET locale = COALESCE(locale, \'en\') WHERE locale IS NULL;',
+    'CREATE TABLE webhook_deliveries (id bigserial PRIMARY KEY, event_id uuid NOT NULL, attempt int DEFAULT 1);',
+  ];
+  const m = `migrations/${new Date().toISOString().slice(0,10).replace(/-/g,'')}_${rand(['add_index','add_column','backfill','webhooks'])}.sql`;
+  await toolCall('Write', m);
+  await toolResult(`Wrote ${rint(6, 30)} lines to ${m}`, 'green');
+  await toolCall('Bash', 'npm run db:migrate');
+  await spinner('Applying migration', rint(500, 1100));
+  await line(`${R}<span class="cyan">${esc(rand(stmts))}</span>`, 50);
+  await toolResult(`Migration applied in ${rint(12, 900)}ms`, 'green');
+}
+
+async function scnPython() {
+  const f = `scripts/${rand(PY_FILES)}`;
+  await toolCall('Write', f);
+  await toolResult(`Wrote ${rint(40, 160)} lines to ${f}`, 'green');
+  await toolCall('Bash', `python3 ${f}`);
+  await progressBar('processing rows', rint(700, 1500), 'blue');
+  await toolResult(`Done — ${rint(120, 5000)} rows written to data/output.csv`, 'green');
+}
+
+async function scnDocs() {
+  await toolCall('Read', 'README.md');
+  await toolResult(`Read ${rint(60, 240)} lines`);
+  await toolCall('Update', 'README.md');
+  await toolResult('Added section: ' + rand(['## Webhook retries', '## Environment variables',
+    '## Running migrations', '## Dark mode', '## Rate limiting', '## Local development']), 'green');
+}
+
+async function scnCurl() {
+  const routes = ['/api/health', '/api/orders?page=2', '/api/users/42', '/api/webhooks/test', '/api/export.csv'];
+  const r = rand(routes);
+  await toolCall('Bash', `curl -s -o /dev/null -w "%{http_code} %{time_total}s" localhost:3000${r}`);
+  await spinner('Waiting for response', rint(300, 800));
+  const ok = Math.random() < 0.85;
+  await toolResult(ok ? `200 0.0${rint(10,99)}s` : `500 0.${rint(10,60)}s`, ok ? 'green' : 'red');
+  if (!ok) {
+    await claudeSay('Got a 500 — checking the server log for the stack trace.');
+    await toolCall('Bash', 'tail -20 server.log');
+    await line(`${R}<span class="red">TypeError: Cannot read properties of undefined (reading 'id')</span>`, 50);
+    await line(`${R}<span class="dim">    at serializeOrder (server/routes/orders.js:${rint(20,90)}:15)</span>`, 40);
+    await claudeSay('The serializer assumes a joined user row that can be null. Guarding it.');
+    await scnEdit();
+  }
+}
+
+// ── RICH SCENARIOS ────────────────────────────────────────
+const CODE_SNIPPETS = [
+  ['export function useDebounce<T>(value: T, delay = 300): T {',
+   '  const [debounced, setDebounced] = useState(value);',
+   '  useEffect(() => {',
+   '    const t = setTimeout(() => setDebounced(value), delay);',
+   '    return () => clearTimeout(t);',
+   '  }, [value, delay]);',
+   '  return debounced;',
+   '}'],
+  ['export async function retryWithBackoff<T>(fn: () => Promise<T>, opts: RetryOpts = {}): Promise<T> {',
+   '  const { retries = 3, base = 250 } = opts;',
+   '  for (let attempt = 0; ; attempt++) {',
+   '    try { return await fn(); }',
+   '    catch (err) {',
+   '      if (attempt >= retries || !isRetryable(err)) throw err;',
+   '      await sleep(base * 2 ** attempt + Math.random() * 100);',
+   '    }',
+   '  }',
+   '}'],
+  ['const schema = z.object({',
+   '  email: z.string().email("Enter a valid email"),',
+   '  password: z.string().min(12, "At least 12 characters"),',
+   '  name: z.string().trim().min(1, "Name is required"),',
+   '  locale: z.enum(["en", "th"]).default("en"),',
+   '});'],
+  ['app.get("/api/health", async (req, res) => {',
+   '  const [db, redis] = await Promise.allSettled([',
+   '    pool.query("SELECT 1"),',
+   '    cache.ping(),',
+   '  ]);',
+   '  const ok = db.status === "fulfilled" && redis.status === "fulfilled";',
+   '  res.status(ok ? 200 : 503).json({ ok, db: db.status, redis: redis.status });',
+   '});'],
+  ['const observer = new IntersectionObserver((entries) => {',
+   '  for (const entry of entries) {',
+   '    if (entry.isIntersecting) {',
+   '      entry.target.classList.add("visible");',
+   '      observer.unobserve(entry.target);',
+   '    }',
+   '  }',
+   '}, { threshold: 0.15 });',
+   '',
+   'document.querySelectorAll(".reveal").forEach((el) => observer.observe(el));'],
+  [':root {',
+   '  --bg: #08090d;',
+   '  --surface: #0f1117;',
+   '  --border: rgba(255,255,255,0.08);',
+   '  --text: #f1f5f9;',
+   '  --accent: #F4620E;',
+   '  --radius: 10px;',
+   '}'],
+  ['describe("rateLimiter", () => {',
+   '  it("allows a burst up to the bucket size", async () => {',
+   '    const rl = createLimiter({ bucket: 10, refillMs: 1000 });',
+   '    const results = await Promise.all(range(12).map(() => rl.take("ip-1")));',
+   '    expect(results.filter(Boolean)).toHaveLength(10);',
+   '  });',
+   '});'],
+];
+
+async function codeBlock(lines, maxShow = 6) {
+  const show = lines.slice(0, maxShow);
+  let n = 1;
+  for (const l of show) {
+    await line(`       <span class="dim">${String(n++).padStart(3)}</span>  <span class="cyan">${esc(l)}</span>`, 30);
+  }
+  if (lines.length > maxShow)
+    await line(`       <span class="dim">     … +${lines.length - maxShow + rint(4, 30)} more lines</span>`, 25);
+}
+
+async function scnWriteCode() {
+  const f = `${rand(DIRS)}/${rand(JS_FILES)}`;
+  await toolCall('Write', f);
+  await toolResult(`Wrote ${rint(38, 180)} lines to ${f}`, 'green');
+  await codeBlock(rand(CODE_SNIPPETS));
+  await line('', 20);
+}
+
+async function scnAgent() {
+  const jobs = [
+    ['Trace the tab-switch flicker', 'Explored 9 files. The chart is destroyed and re-created on every tab click because the config object is rebuilt inline — chart.js:142 needs memoization.'],
+    ['Find all innerHTML usages', 'Found 11 innerHTML assignments across 5 JS files — 3 interpolate user input directly and should be textContent or sanitized.'],
+    ['Audit the CSS for hardcoded colors', 'Found 17 hex colors outside :root across 4 stylesheets — they bypass the token set, which is why dark mode misses them.'],
+    ['Map every scroll listener', 'Found 6 scroll listeners; 4 run layout reads (offsetTop) in the handler causing forced reflow — should batch via requestAnimationFrame.'],
+    ['Trace the layout shift on load', 'Lighthouse reports CLS 0.31. Cause: gallery images have no width/height attributes and the web font swaps late — both fixable.'],
+  ];
+  const [name, result] = rand(jobs);
+  await toolCall('Task', `${name} · subagent: Explore`);
+  await spinner(`Running ${name}`, rint(1200, 2600));
+  await toolResult(result);
+  await toolResult(`Done (${rint(9, 34)} tool uses · ${rint(18, 92)}.${rint(0,9)}k tokens · ${rint(24, 110)}s)`, 'green');
+  await line('', 20);
+}
+
+async function scnWebResearch() {
+  const topics = [
+    ['react-query v5 migration guide', 'tanstack.com/query/latest/docs/framework/react/guides/migrating-to-v5'],
+    ['postgres partial index best practices', 'postgresql.org/docs/current/indexes-partial.html'],
+    ['node 20 permission model breaking changes', 'nodejs.org/api/permissions.html'],
+    ['fastify rate limit plugin options', 'github.com/fastify/fastify-rate-limit'],
+    ['docker multi-stage build node alpine', 'docs.docker.com/build/building/multi-stage'],
+  ];
+  const [q, url] = rand(topics);
+  await toolCall('WebSearch', `"${q}"`);
+  await spinner('Searching', rint(500, 1100));
+  await toolResult(`Found ${rint(8, 10)} results`);
+  await toolCall('WebFetch', `https://${url}`);
+  await spinner('Fetching', rint(400, 1000));
+  await toolResult(`Received ${rint(4, 28)}.${rint(0,9)}k tokens — extracted the relevant section`);
+}
+
+async function scnBench() {
+  await toolCall('Bash', 'node scripts/bench.js --runs 50');
+  await progressBar('benchmarking', rint(800, 1600), 'yellow');
+  const before = rint(300, 900), after = rint(8, 45);
+  await toolResult(`p50 ${Math.round(before*0.7)}ms → ${Math.round(after*0.7)}ms   p95 ${before}ms → ${after}ms   (${Math.round(before/after)}× faster)`, 'green');
+}
+
+async function scnCoverage() {
+  await toolCall('Bash', 'npx vitest run --coverage');
+  await spinner('Collecting coverage', rint(900, 1800));
+  const rows = [['statements', rint(84, 98)], ['branches', rint(74, 95)], ['functions', rint(80, 97)], ['lines', rint(85, 98)]];
+  for (const [k, v] of rows) {
+    const cls = v >= 90 ? 'green' : v >= 80 ? 'yellow' : 'red';
+    await line(`${R}<span class="dim">${k.padEnd(12)}</span><span class="${cls}">${v}%</span> <span class="dim">(${rint(200,1400)}/${rint(1500,1600)})</span>`, 35);
+  }
+}
+
+async function scnLogs() {
+  await toolCall('Bash', 'tail -f logs/app.log — watching for the error');
+  const lvls = [['INFO','dim'],['INFO','dim'],['WARN','yellow'],['DEBUG','dim'],['ERROR','red']];
+  const msgs = ['request completed route=/api/orders status=200 dur=14ms',
+    'cache miss key=fx:USD-THB — fetching upstream',
+    'retrying webhook delivery attempt=2 backoff=500ms',
+    'pool checkout latency 230ms exceeds soft limit',
+    'unhandled rejection in queue consumer: TimeoutError after 10000ms'];
+  const n = rint(3, 5);
+  for (let i = 0; i < n; i++) {
+    const [lvl, cls] = lvls[Math.min(i, lvls.length-1)];
+    const ts = new Date(Date.now() - rint(0, 60000)).toISOString().slice(11, 23);
+    await line(`${R}<span class="dim">${ts}</span> <span class="${cls}">${lvl.padEnd(5)}</span> <span class="dim">${esc(msgs[Math.min(i, msgs.length-1)])}</span>`, rint(120, 400));
+  }
+}
+
+// ── TODO LIST (Claude Code style) ─────────────────────────
+const TODO_SETS = [
+  ['Explore the current implementation', 'Reproduce the bug locally', 'Fix the root cause', 'Add a regression test', 'Run the full test suite', 'Commit the fix'],
+  ['Map all affected call sites', 'Design the new API surface', 'Implement the core change', 'Migrate existing callers', 'Update tests and types', 'Update documentation'],
+  ['Profile to find the bottleneck', 'Add the missing index / cache', 'Verify with benchmarks', 'Check for regressions', 'Commit with before/after numbers'],
+  ['Read the migration guide', 'Upgrade the dependency', 'Fix breaking API usages', 'Run typecheck and tests', 'Smoke-test the app', 'Commit the upgrade'],
+  ['Write failing tests first', 'Implement the feature', 'Handle edge cases', 'Wire up the UI state', 'Verify accessibility', 'Update the README'],
+];
+
+async function renderTodos(items, doneCount) {
+  await toolCall('TodoWrite', `${items.length} todos`);
+  for (let i = 0; i < items.length; i++) {
+    const done = i < doneCount;
+    const active = i === doneCount;
+    const box = done ? '<span class="green">☒</span>' : '☐';
+    const txt = done ? `<span class="dim" style="text-decoration:line-through">${esc(items[i])}</span>`
+              : active ? `<span class="bold">${esc(items[i])}</span>`
+              : `<span class="dim">${esc(items[i])}</span>`;
+    await line(`${R}${box} ${txt}`, 25);
+  }
+  await line('', 20);
+}
+
+const EXPLORE = [scnRead, scnRead, scnSearch, scnAgent, scnWebResearch, scnGit];
+const IMPLEMENT = [scnEdit, scnEdit, scnEdit, scnEdit, scnWriteCode, scnDocs];
+const VERIFY = [scnTests, scnLint, scnBuild, scnCoverage];
+
+// ── SESSION LOOP ──────────────────────────────────────────
+async function banner() {
+  await line('<span class="claude bold"> ✻ Welcome to Claude Code!</span>', 0);
+  await line('', 0);
+  await line('<span class="dim">   /help for help, /status for your current setup</span>', 0);
+  await line('', 0);
+  await line('<span class="dim">   cwd: ~/projects/webapp</span>', 0);
+  await line('', 0);
+  await line('<span class="dim">   ────────────────────────────────────────────────────</span>', 0);
+}
+
+async function phase(pool, count, remarkChance) {
+  for (let i = 0; i < count; i++) {
+    await rand(pool)();
+    if (Math.random() < remarkChance) await claudeSay(rand(CLAUDE_REMARKS));
+    await sleep(jitter(100));
+  }
+}
+
+async function runTask() {
+  await taskHeader(rand(PROMPTS));
+
+  // plan: write a todo list up front
+  const todos = rand(TODO_SETS).slice();
+  await claudeSay(rand(CLAUDE_REMARKS));
+  await renderTodos(todos, 0);
+
+  // phase 1 — explore (reads, greps, subagents, web research, logs)
+  await phase(EXPLORE, rint(2, 4), 0.4);
+  await renderTodos(todos, rint(1, 2));
+
+  // phase 2 — implement (multi-file edits, new code, migrations)
+  await phase(IMPLEMENT, rint(2, 4), 0.35);
+  await renderTodos(todos, todos.length - 2);
+
+  // phase 3 — verify (tests, typecheck, benchmarks, coverage)
+  await phase(VERIFY, rint(2, 3), 0.25);
+
+  // occasionally a verification failure forces another implement/verify round
+  if (Math.random() < 0.3) {
+    await claudeSay('Verification surfaced an edge case — going back to handle it.');
+    await phase(IMPLEMENT, 1, 0);
+    await phase(VERIFY, 1, 0);
+  }
+  await renderTodos(todos, todos.length - 1);
+
+  // phase 4 — land it
+  await scnGitCommit();
+  await renderTodos(todos, todos.length);
+
+  // summary
+  await sleep(jitter(150));
+  const summary = rand(SUMMARIES);
+  await line(`${T}<span class="bold">Done.</span> ${esc(summary[0])}`, 60);
+  await line(`  ${esc(summary[1])}`, 40);
+  await line('', 30);
+  await sleep(jitter(600));
+}
+
+(async function main() {
+  await banner();
+  await sleep(400);
+  while (true) {
+    try { await runTask(); }
+    catch (e) { await sleep(300); }
+  }
+})();
+</script>
+</body>
+</html>
