@@ -517,6 +517,18 @@ const PROMPTS = [
   'the table sort arrow points the wrong way on the second click',
   'CSS transition on the accordion is janky, it animates height directly',
   'the copy-to-clipboard button gives no feedback when it succeeds',
+  'build a drag-and-drop kanban board with three columns and localStorage persistence',
+  'add a lightbox to the gallery — arrow keys, swipe, and escape to close',
+  'the product list renders 5000 rows at once, virtualize it',
+  'add skeleton loaders to every card while the data is fetching',
+  'build a 6-digit OTP input — auto-advance, paste support, backspace navigation',
+  'the data table needs a sticky header and horizontal scroll on mobile',
+  'add an EN/TH language toggle that persists and swaps all UI strings',
+  'the invoice page prints terribly — add a proper print stylesheet',
+  'add a share button that uses the Web Share API with a clipboard fallback',
+  'convert the hero video to lazy-load and respect prefers-reduced-motion',
+  'the date picker is unusable on mobile — rebuild it with native input fallback',
+  'add keyboard shortcuts (/, j, k, enter) to the search results list',
 ];
 
 const CLAUDE_REMARKS = [
@@ -1727,6 +1739,195 @@ async function scnMultiAgent() {
   await line('', 30);
 }
 
+// ── AUDIT / E2E / UX SCENARIOS ────────────────────────────
+const LH_AUDITS = [
+  ['Eliminate render-blocking resources', 'potential savings of 430 ms'],
+  ['Properly size images', 'potential savings of 212 KiB'],
+  ['Image elements do not have explicit width and height', '4 elements'],
+  ['Ensure text remains visible during webfont load', 'font-display missing on 2 fonts'],
+  ['Reduce unused CSS', 'potential savings of 38 KiB'],
+  ['Tap targets are not sized appropriately', '6 targets under 48×48px'],
+  ['Background and foreground colors do not have sufficient contrast', '9 elements'],
+  ['Avoid large layout shifts', '3 shifts — hero image and web font swap'],
+  ['Serve images in next-gen formats', 'potential savings of 340 KiB'],
+  ['Largest Contentful Paint element', 'hero image, 3 420 ms'],
+];
+
+const lhCls = v => v >= 90 ? 'green' : v >= 50 ? 'yellow' : 'red';
+
+async function lhScoreRow(scores) {
+  const seg = Object.entries(scores).map(([k, v]) =>
+    `<span class="${lhCls(v)}">● ${v}</span> <span class="dim">${k}</span>`).join('   ');
+  await line(`${R}${seg}`, 50);
+}
+
+async function scnLighthouse() {
+  await claudeSay("I'll run a full Lighthouse audit to get a baseline.");
+  await toolCall('Bash', 'npx lighthouse http://localhost:3000 --preset=desktop --quiet');
+  await spinner('Auditing page', rint(2500, 5000));
+  const scores = { Performance: rint(48, 74), Accessibility: rint(68, 86),
+    'Best Practices': rint(72, 93), SEO: rint(84, 100) };
+  await lhScoreRow(scores);
+  const lcp = (Math.random() * 2.4 + 2.2).toFixed(1), cls = (Math.random() * 0.2 + 0.08).toFixed(2), tbt = rint(180, 620);
+  await line(`${R}<span class="dim">LCP</span> <span class="red">${lcp} s</span>   <span class="dim">CLS</span> <span class="yellow">${cls}</span>   <span class="dim">TBT</span> <span class="yellow">${tbt} ms</span>   <span class="dim">FCP</span> <span class="green">1.${rint(0,4)} s</span>`, 45);
+  const fails = [...LH_AUDITS].sort(() => Math.random() - 0.5).slice(0, rint(2, 4));
+  for (const [title, detail] of fails)
+    await line(`${R}<span class="red">✗</span> <span class="dim">${esc(title)} — ${esc(detail)}</span>`, 45);
+  await line('', 20);
+  if (Math.random() < 0.55) {
+    await claudeSay('Fixing the highest-impact items first — the LCP image and the layout shifts.');
+    await scnEdit();
+    await toolCall('Bash', 'npx lighthouse http://localhost:3000 --preset=desktop --quiet');
+    await spinner('Re-auditing', rint(2000, 4000));
+    const better = Object.fromEntries(Object.entries(scores).map(([k, v]) => [k, Math.min(100, v + rint(14, 30))]));
+    await lhScoreRow(better);
+    await toolResult(`Performance ${scores.Performance} → ${better.Performance} · CLS ${cls} → 0.0${rint(1,4)}`, 'green');
+    await line('', 20);
+  }
+}
+
+const AXE_RULES = [
+  ['color-contrast', 'serious', 'Elements must have sufficient color contrast'],
+  ['image-alt', 'critical', 'Images must have alternate text'],
+  ['label', 'critical', 'Form elements must have labels'],
+  ['link-name', 'serious', 'Links must have discernible text'],
+  ['button-name', 'critical', 'Buttons must have discernible text'],
+  ['heading-order', 'moderate', 'Heading levels should only increase by one'],
+  ['landmark-one-main', 'moderate', 'Document should have one main landmark'],
+  ['aria-allowed-attr', 'serious', 'ARIA attributes must be allowed for the element role'],
+  ['focus-order-semantics', 'moderate', 'Elements in the focus order need an appropriate role'],
+];
+const AXE_CLS = { critical: 'red', serious: 'orange', moderate: 'yellow' };
+
+async function scnAxe() {
+  await toolCall('Bash', 'npx @axe-core/cli http://localhost:3000 --exit');
+  await spinner('Scanning for accessibility violations', rint(1500, 3000));
+  if (Math.random() < 0.25) {
+    await toolResult('0 violations found across 3 pages', 'green');
+    return;
+  }
+  const found = [...AXE_RULES].sort(() => Math.random() - 0.5).slice(0, rint(2, 4));
+  let nodes = 0;
+  for (const [rule, impact, msg] of found) {
+    const n = rint(1, 8); nodes += n;
+    await line(`${R}<span class="${AXE_CLS[impact]}">✗ ${esc(rule)}</span> <span class="dim">(${impact}) — ${esc(msg)} · ${n} node${n > 1 ? 's' : ''}</span>`, 50);
+  }
+  await toolResult(`${found.length} violations · ${nodes} nodes affected`, 'red');
+  await line('', 20);
+  await claudeSay(`Fixing the ${found[0][1]} ${found[0][0]} violation${found.length > 1 ? 's first' : ''}.`);
+  await scnEdit();
+  await toolCall('Bash', 'npx @axe-core/cli http://localhost:3000 --exit');
+  await spinner('Re-scanning', rint(1200, 2400));
+  await toolResult('0 violations found across 3 pages', 'green');
+  await line('', 20);
+}
+
+const PW_BROWSERS = ['chromium', 'firefox', 'webkit'];
+const PW_SPECS = ['checkout.spec.ts', 'mobile-nav.spec.ts', 'auth-flow.spec.ts',
+  'search.spec.ts', 'pricing-toggle.spec.ts', 'modal-focus.spec.ts',
+  'dark-mode.spec.ts', 'carousel-swipe.spec.ts', 'form-validation.spec.ts'];
+const PW_TESTS = [
+  'completes guest checkout end to end',
+  'closes the mobile nav when a link is tapped',
+  'persists dark mode across reloads',
+  'shows inline errors on invalid signup',
+  'keeps focus trapped inside the open modal',
+  'sorts the table by each column header',
+  'debounces the search input to one request',
+  'swipes exactly one slide per gesture',
+  'restores scroll position on browser back',
+];
+
+async function scnPlaywright() {
+  const total = rint(24, 96), workers = rand([2, 4, 6]);
+  await toolCall('Bash', 'npx playwright test --reporter=line');
+  await toolResult(`Running ${total} tests using ${workers} workers`);
+  await spinner('Running e2e tests', rint(2000, 4500));
+  const shown = rint(3, 5);
+  const specs = [...PW_SPECS].sort(() => Math.random() - 0.5);
+  const tests = [...PW_TESTS].sort(() => Math.random() - 0.5);
+  for (let i = 0; i < shown; i++) {
+    await line(`${R}<span class="green">✓</span> <span class="dim">[${rand(PW_BROWSERS)}] › ${esc(specs[i])}:${rint(8, 90)} › ${esc(tests[i])} (${(Math.random() * 4 + 0.5).toFixed(1)}s)</span>`, rint(120, 350));
+  }
+  if (Math.random() < 0.3) {
+    const spec = specs[shown], test = tests[shown], browser = rand(PW_BROWSERS);
+    await line(`${R}<span class="red">✘ [${browser}] › ${esc(spec)}:${rint(8, 90)} › ${esc(test)} (5.${rint(0,9)}s)</span>`, 200);
+    await line(`${R}<span class="red">  Error: expect(locator).toBeVisible() — Timed out 5000ms waiting for locator('${esc(rand(['.modal .close-btn', '[data-testid=submit]', 'nav >> text=Settings', '.toast--success']))}')</span>`, 60);
+    await line(`${R}<span class="dim">  attachment: test-results/${esc(spec.replace('.spec.ts', ''))}-${browser}/trace.zip · screenshot.png</span>`, 50);
+    await toolResult(`${total - 1} passed · 1 failed (${rint(30, 90)}s)`, 'red');
+    await line('', 20);
+    await claudeSay(`The ${browser} failure is real — the element renders but stays hidden behind the overlay. Fixing the z-index stacking.`);
+    await scnEdit();
+    await toolCall('Bash', 'npx playwright test --last-failed');
+    await spinner('Re-running failed tests', rint(1200, 2500));
+    await toolResult(`1 passed (${rint(4, 12)}s)`, 'green');
+  } else {
+    await toolResult(`${total} passed (${rint(25, 80)}s) across ${PW_BROWSERS.join(', ')}`, 'green');
+  }
+  await line('', 20);
+}
+
+const UX_FLOWS = ['signup', 'checkout', 'search & filter', 'settings update',
+  'password reset', 'plan upgrade', 'first-run onboarding'];
+const UX_FINDINGS = [
+  ['high', '3 of 5 participants missed the primary CTA — it sits below the fold on mobile'],
+  ['high', 'users expected Enter to submit the search, but only the button works'],
+  ['high', 'focus never moves into the modal — keyboard users tab through the page behind it'],
+  ['medium', 'error messages render at the top of the form, far from the offending field'],
+  ['medium', 'no feedback for the first 800 ms of submit — two users double-clicked'],
+  ['medium', 'breadcrumbs disappear on the settings page, so users lost their place'],
+  ['medium', 'the empty state gives no next action — users assumed the page was broken'],
+  ['low', 'tooltip delay of 1.2 s feels sluggish — users hovered away before it appeared'],
+  ['low', 'inconsistent button casing: "Save Changes" vs "Save changes" across pages'],
+  ['low', 'the success toast auto-dismisses in 2 s — too fast to read the undo link'],
+];
+const UX_CLS = { high: 'red', medium: 'yellow', low: 'dim' };
+
+async function scnUsability() {
+  await claudeSay("I'll run a full usability review across the key flows — heuristics plus task completion.");
+  await toolCall('Task', 'UX usability review · subagent: general-purpose');
+  await spinner('Evaluating user flows', rint(3000, 6000));
+  const flows = [...UX_FLOWS].sort(() => Math.random() - 0.5).slice(0, rint(3, 4));
+  for (const f of flows) {
+    const rate = rint(55, 98);
+    const cls = rate >= 85 ? 'green' : rate >= 70 ? 'yellow' : 'red';
+    await line(`${R}<span class="dim">${esc(f)} flow</span> <span class="${cls}">${rate}% completion</span> <span class="dim">· median ${rint(20, 140)}s · ${rint(0, 4)} misclicks</span>`, 60);
+  }
+  await line('', 15);
+  const findings = [...UX_FINDINGS].sort(() => Math.random() - 0.5).slice(0, rint(3, 5))
+    .sort((a, b) => ['high', 'medium', 'low'].indexOf(a[0]) - ['high', 'medium', 'low'].indexOf(b[0]));
+  for (const [sev, msg] of findings)
+    await line(`${R}<span class="${UX_CLS[sev]}">[${sev}]</span> <span class="dim">${esc(msg)}</span>`, 55);
+  await toolResult(`Done (${rint(12, 40)} tool uses · ${rint(30, 110)}.${rint(0,9)}k tokens · ${rint(45, 180)}s)`, 'green');
+  await line('', 20);
+  if (Math.random() < 0.6) {
+    await claudeSay(`The ${findings[0][0]}-severity finding is the one to fix first — ${findings[0][1].split('—')[0].trim()}.`);
+    await scnEdit();
+  }
+}
+
+const ARTIFACTS = [
+  ['ui-comparison.html', 'Before/after comparison of the pricing cards — old table layout vs the new responsive grid'],
+  ['navbar-comparison.html', 'Side-by-side of the old div-based nav and the new accessible header at three breakpoints'],
+  ['dark-mode-preview.html', 'Interactive light/dark toggle showing every component with the new token set'],
+  ['form-states.html', 'All validation states of the signup form — pristine, inline errors, submitting, success'],
+  ['button-audit.html', 'Every button variant before and after the token migration, with contrast ratios'],
+  ['audit-report.html', 'Full audit dashboard — Lighthouse scores, axe violations, and Playwright results, before vs after'],
+];
+
+async function scnArtifact() {
+  const [file, desc] = rand(ARTIFACTS);
+  await claudeSay("I'll publish a comparison artifact so you can review the change visually.");
+  await toolCall('Write', `scratchpad/${file}`);
+  await toolResult(`Wrote ${rint(180, 460)} lines to ${file}`, 'green');
+  await toolCall('Artifact', file);
+  await spinner('Publishing artifact', rint(1200, 2800));
+  const id = Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6);
+  await toolResult(`Published → https://claude.ai/public/artifacts/${id}`, 'cyan');
+  await line(`${R}<span class="dim">${esc(desc)}</span>`, 45);
+  await line('', 20);
+}
+
 // ── SCENARIOS ─────────────────────────────────────────────
 async function scnRead() {
   const f = `${rand(DIRS)}/${rand(JS_FILES)}`;
@@ -2094,10 +2295,12 @@ async function renderTodos(items, doneCount) {
   await line('', 20);
 }
 
-const EXPLORE = [scnRead, scnRead, scnSearch, scnAgent, scnWebResearch, scnGit, scnMultiAgent];
+const EXPLORE = [scnRead, scnRead, scnSearch, scnAgent, scnWebResearch, scnGit,
+  scnMultiAgent, scnUsability];
 const IMPLEMENT = [scnEdit, scnEdit, scnEdit, scnWriteCode, scnDocs,
   scnLargeWrite, scnLargeWrite, scnLargeReplace, scnLargeReplace];
-const VERIFY = [scnTests, scnLint, scnBuild, scnCoverage];
+const VERIFY = [scnTests, scnLint, scnBuild, scnCoverage,
+  scnPlaywright, scnLighthouse, scnAxe];
 
 // ── SESSION LOOP ──────────────────────────────────────────
 async function banner() {
@@ -2138,6 +2341,9 @@ async function runTask() {
   // phase 3 — verify (tests, typecheck, benchmarks, coverage)
   await phase(VERIFY, rint(2, 3), 0.25);
 
+  // sometimes publish a before/after artifact for visual review
+  if (Math.random() < 0.2) await scnArtifact();
+
   // occasionally a verification failure forces another implement/verify round
   if (Math.random() < 0.3) {
     await claudeSay('Verification surfaced an edge case — going back to handle it.');
@@ -2161,13 +2367,77 @@ async function runTask() {
   await sleep(rint(5000, 10000));
 }
 
+// ── FULL AUDIT TASK ───────────────────────────────────────
+const AUDIT_PROMPTS = [
+  'run a full audit on the site — performance, accessibility, and UX — and fix what you find',
+  'the landing page feels slow and clunky, do a complete quality pass',
+  'we launch Friday — run every check we have and fix the blockers',
+  'audit the checkout flow end to end: lighthouse, axe, playwright, and a UX review',
+  'a customer complained the site is hard to use on mobile — audit everything and fix it',
+];
+
+const AUDIT_TODOS = [
+  'Run Lighthouse for a performance baseline',
+  'Scan accessibility with axe-core',
+  'Run the Playwright end-to-end suite',
+  'Usability review of the key flows',
+  'Fix the highest-impact findings',
+  'Re-verify and publish the comparison artifact',
+];
+
+const AUDIT_SUMMARIES = [
+  ['Lighthouse performance went from 58 to 96 and accessibility to 100.',
+   'All axe violations fixed, and the Playwright suite is green in all 3 browsers.'],
+  ['Every launch blocker is cleared: contrast, the modal focus trap, and the LCP image.',
+   'The before/after comparison artifact is linked above for review.'],
+  ['The checkout flow now passes e2e in chromium, firefox, and webkit.',
+   'UX fixes landed: CTA above the fold, Enter submits search, errors inline.'],
+  ['CLS dropped from 0.24 to 0.02 after reserving image space and preloading the font.',
+   'Task completion in the usability re-test rose from 61% to 94%.'],
+];
+
+async function runAuditTask() {
+  await taskHeader(rand(AUDIT_PROMPTS));
+  const todos = AUDIT_TODOS.slice();
+  await claudeSay("This calls for the full battery — performance, accessibility, e2e, and UX. I'll baseline everything first, then fix.");
+  await renderTodos(todos, 0);
+
+  await scnLighthouse();
+  await renderTodos(todos, 1);
+  await scnAxe();
+  await renderTodos(todos, 2);
+  await scnPlaywright();
+  await renderTodos(todos, 3);
+  await scnUsability();
+  await renderTodos(todos, 4);
+
+  await claudeSay('Findings triaged — fixing the highest-impact items now.');
+  await phase(IMPLEMENT, rint(2, 3), 0.3);
+  await renderTodos(todos, 5);
+
+  await phase(VERIFY, rint(1, 2), 0.2);
+  await scnArtifact();
+  await renderTodos(todos, todos.length);
+  await scnGitCommit();
+
+  await sleep(jitter(150));
+  const summary = rand(AUDIT_SUMMARIES);
+  await line(`${T}<span class="bold">Audit complete.</span> ${esc(summary[0])}`, 60);
+  await line(`  ${esc(summary[1])}`, 40);
+  await line('', 30);
+  await sleep(rint(5000, 10000));
+}
+
 (async function main() {
   await banner();
   await sleep(400);
   while (true) {
     if (waitingForUser) await waitForResume();
     interrupted = false;
-    try { await runTask(); }
+    try {
+      if (Math.random() < 0.22) await runAuditTask();
+      else await runTask();
+    }
     catch (e) { await sleep(300); }
   }
 })();

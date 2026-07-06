@@ -17,6 +17,9 @@ builds, and commits, forever.
 - Realistic Claude Code terminal UI with spinner, progress bars, and diff output
 - Tasks cycle through explore → implement → verify → commit phases
 - Large code scenarios: 40–100 line additions, replacements, and removals
+- Multi-agent scenarios with parallel MCP tool calls and synthesized findings
+- Full-audit tasks: Lighthouse scores, axe accessibility scans, Playwright e2e runs across three browsers, and UX usability reviews with per-flow completion rates
+- Claude Artifact publishing for before/after UI comparison
 - Interactive input mode — click the prompt bar, type anything, press Enter to mock a response
 - Speed control, pause/resume, and font size adjustment
 - Suspends automatically when the tab is hidden to save CPU
