@@ -1529,12 +1529,14 @@ const LARGE_REPLACES = [
 
 async function showDiffLines(lines, mode, startLn) {
   const cls = mode === 'add' ? 'add' : mode === 'del' ? 'del' : 'dim';
-  const pfx = mode === 'add' ? '+  ' : mode === 'del' ? '-  ' : '   ';
+  const pfx = mode === 'add' ? '+' : mode === 'del' ? '-' : ' ';
   let ln = startLn;
   for (const l of lines) {
     if (interrupted) break;
+    const lnStr = String(ln++).padStart(3);
+    // line number lives inside the coloured span so they share the same row
     await line(
-      `       <span class="dim">${String(ln++).padStart(3)}</span> <span class="${cls}">${pfx}${esc(l)}</span>`,
+      `<span class="${cls}"><span style="opacity:0.45;user-select:none"> ${lnStr} </span>${pfx}  ${esc(l)}</span>`,
       5
     );
   }
