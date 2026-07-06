@@ -254,6 +254,7 @@ document.addEventListener('keydown', e => {
   if (inputMode) {
     if (e.key === 'Escape') {
       e.preventDefault();
+      userTyped = ''; hiddenInput.value = ''; inputTextEl.textContent = '';
       deactivateInputMode();
     } else if (e.key === 'Enter') {
       e.preventDefault();
@@ -297,16 +298,12 @@ function activateInputMode() {
 }
 
 function deactivateInputMode() {
-  inputMode   = false;
-  interrupted = false;
+  inputMode      = false;
+  interrupted    = false;
   waitingForUser = false;
-  userTyped   = '';
-  hiddenInput.value = '';
-  inputTextEl.textContent = '';
   promptbox.classList.remove('input-active');
   hiddenInput.blur();
   updateStatusline();
-  // unblock the main loop so it restarts from a clean state
   if (resumeSimFn) { resumeSimFn(); resumeSimFn = null; }
 }
 
