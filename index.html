@@ -1533,12 +1533,7 @@ async function showDiffLines(lines, mode, startLn) {
   let ln = startLn;
   for (const l of lines) {
     if (interrupted) break;
-    const lnStr = String(ln++).padStart(3);
-    // line number lives inside the coloured span so they share the same row
-    await line(
-      `<span class="${cls}"><span style="opacity:0.45;user-select:none"> ${lnStr} </span>${pfx}  ${esc(l)}</span>`,
-      5
-    );
+    await line(`<span class="${cls}">${LN(ln++)}${pfx}  ${esc(l)}</span>`, 5);
   }
   return ln;
 }
@@ -1574,18 +1569,20 @@ async function scnLargeReplace() {
   await line('', 20);
 }
 
+const LN = n => `<span style="opacity:0.45;user-select:none"> ${String(n).padStart(3)} </span>`;
+
 async function diffBlock(chunk) {
   await toolCall('Update', chunk.file);
   const addCount = chunk.add.split('\n').length;
   await toolResult(`Updated ${chunk.file} with ${addCount} addition${addCount>1?'s':''} and 1 removal`);
   let ln = rint(8, 180);
   const ctx = async (text) => {
-    await line(`       <span class="dim">${String(ln++).padStart(3)}</span>  <span class="dim">${esc(text)}</span>`, 22);
+    await line(`<span class="dim">${LN(ln++)}   ${esc(text)}</span>`, 22);
   };
   for (const t of chunk.before) await ctx(t);
-  await line(`       <span class="dim">${String(ln).padStart(3)}</span> <span class="del">-  ${esc(chunk.del)}</span>`, 45);
+  await line(`<span class="del">${LN(ln)}-  ${esc(chunk.del)}</span>`, 45);
   for (const a of chunk.add.split('\n')) {
-    await line(`       <span class="dim">${String(ln++).padStart(3)}</span> <span class="add">+  ${esc(a)}</span>`, 45);
+    await line(`<span class="add">${LN(ln++)}+  ${esc(a)}</span>`, 45);
   }
   for (const t of chunk.after) await ctx(t);
   await line('', 20);
