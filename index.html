@@ -421,8 +421,15 @@ async function toolCall(name, arg) {
 async function toolResult(text, cls = 'dim') {
   await line(`${R}<span class="${cls}">${esc(text)}</span>`, 70);
 }
+// occasional long stall — real sessions sit on the spinner for seconds
+// while the model thinks or a slow tool call runs
+async function maybeLongPause(chance = 0.18) {
+  if (Math.random() < chance) await spinner(rand(THINK_WORDS), rint(5000, 10000));
+}
+
 async function claudeSay(text) {
-  await spinner(rand(THINK_WORDS), rint(400, 1200));
+  // most remarks follow a short think, but sometimes it's a long one
+  await spinner(rand(THINK_WORDS), Math.random() < 0.15 ? rint(5000, 9000) : rint(400, 1200));
   await line(`${T}${esc(text)}`, 40);
   await line('', 20);
 }
@@ -1021,6 +1028,7 @@ async function phase(pool, count, remarkChance) {
   for (let i = 0; i < count; i++) {
     await rand(pool)();
     if (Math.random() < remarkChance) await claudeSay(rand(CLAUDE_REMARKS));
+    await maybeLongPause();
     await sleep(jitter(100));
   }
 }
@@ -1062,7 +1070,9 @@ async function runTask() {
   await line(`${T}<span class="bold">Done.</span> ${esc(summary[0])}`, 60);
   await line(`  ${esc(summary[1])}`, 40);
   await line('', 30);
-  await sleep(jitter(600));
+  // idle at the prompt for a while, as if the user is reading the summary
+  // and typing the next request
+  await sleep(rint(5000, 10000));
 }
 
 (async function main() {
