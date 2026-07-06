@@ -137,6 +137,11 @@
     text-shadow: none;
   }
   .statusline .mode { color: var(--yellow); font-weight: 700; }
+  .statusline .input-mode { color: var(--green); font-weight: 700; }
+
+  .promptbox { cursor: text; transition: border-color 0.15s ease; }
+  .promptbox.input-active { border-color: rgba(255,255,255,0.5); }
+  .promptbox.input-active .prompt-char { color: var(--green); }
 
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
@@ -149,21 +154,33 @@
 <body>
 <div class="window">
   <div class="terminal" id="term"></div>
+  <input id="hiddenInput" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" style="position:fixed;opacity:0;pointer-events:none;top:-100px;left:-100px;width:1px;height:1px;">
   <div class="inputbar">
     <div class="tokens" id="tokens">0 tokens</div>
-    <div class="promptbox">
+    <div class="promptbox" id="promptbox">
       <span class="prompt-char">❯</span><span id="inputText"></span><span class="cursor"></span>
     </div>
-    <div class="statusline"><span class="mode">⏵⏵ auto mode on</span> (shift+tab to cycle) · ← for agents<span id="speedInfo"></span></div>
+    <div class="statusline" id="statusline"><span class="mode">⏵⏵ auto mode on</span> (shift+tab to cycle) · ← for agents<span id="speedInfo"></span></div>
   </div>
 </div>
 
 <script>
 // ── SETUP ─────────────────────────────────────────────────
-const term = document.getElementById('term');
-const MAX_LINES = 250;          // DOM cap for endless sessions
+const term        = document.getElementById('term');
+const promptbox   = document.getElementById('promptbox');
+const hiddenInput = document.getElementById('hiddenInput');
+const inputTextEl = document.getElementById('inputText');
+const statuslineEl= document.getElementById('statusline');
+const MAX_LINES = 250;
 const tokensEl = document.getElementById('tokens');
 let tokenCount = rint2(800, 4000);
+
+// ── INPUT MODE STATE ──────────────────────────────────────
+let inputMode      = false;   // user is typing
+let interrupted    = false;   // fast-forward current task silently
+let waitingForUser = false;   // main loop is paused
+let resumeSimFn    = null;    // call to unblock main loop
+let userTyped      = '';      // what the user has typed so far
 function rint2(lo, hi) { return lo + Math.floor(Math.random() * (hi - lo + 1)); }
 function bumpTokens(n) {
   tokenCount += n;
@@ -192,8 +209,10 @@ document.addEventListener('visibilitychange', () => { hiddenTab = document.hidde
 // all animation timing funnels through here, so speed changes,
 // pause, and tab visibility apply instantly, even mid-spinner
 async function sleep(baseMs) {
+  if (interrupted) return;
   let remaining = baseMs;
   while (remaining > 0) {
+    if (interrupted) return;
     if (paused || hiddenTab) { await rawSleep(250); continue; }
     const chunk = Math.min(60, remaining / speedMult);
     await rawSleep(chunk);
@@ -205,13 +224,21 @@ let statusHideTimer = null;
 function updateStatusline() {
   const speedEl = document.getElementById('speedInfo');
   clearTimeout(statusHideTimer);
-  if (paused) {
-    // stays visible for the whole pause
-    speedEl.innerHTML = ' · <span class="red bold">⏸ paused — enter to resume</span>';
+  if (inputMode) {
+    statuslineEl.innerHTML = '<span class="input-mode">⌨ input mode</span> — esc to cancel · enter to submit';
     return;
   }
-  speedEl.innerHTML = ` · <span class="cyan">${speedMult}× speed (↑/↓)</span> · <span class="cyan">${fontSize}px (+/−)</span>`;
-  statusHideTimer = setTimeout(() => { speedEl.innerHTML = ''; }, 2500);
+  statuslineEl.innerHTML = '<span class="mode">⏵⏵ auto mode on</span> (shift+tab to cycle) · ← for agents<span id="speedInfo"></span>';
+  const newSpeedEl = document.getElementById('speedInfo');
+  if (paused) {
+    newSpeedEl.innerHTML = ' · <span class="red bold">⏸ paused — enter to resume</span>';
+    return;
+  }
+  newSpeedEl.innerHTML = ` · <span class="cyan">${speedMult}× speed (↑/↓)</span> · <span class="cyan">${fontSize}px (+/−)</span>`;
+  statusHideTimer = setTimeout(() => {
+    const el = document.getElementById('speedInfo');
+    if (el) el.innerHTML = '';
+  }, 2500);
 }
 
 // font size (+ / - keys)
@@ -224,6 +251,16 @@ function applyFontSize() {
 }
 
 document.addEventListener('keydown', e => {
+  if (inputMode) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      deactivateInputMode();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      handleSubmit();
+    }
+    return;
+  }
   if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
     e.preventDefault();
     const i = SPEED_STEPS.indexOf(speedMult);
@@ -245,6 +282,101 @@ document.addEventListener('keydown', e => {
   }
 });
 
+// ── INPUT MODE HANDLERS ───────────────────────────────────
+function activateInputMode() {
+  if (inputMode) return;
+  inputMode    = true;
+  interrupted  = true;
+  waitingForUser = true;
+  userTyped    = '';
+  hiddenInput.value = '';
+  inputTextEl.textContent = '';
+  promptbox.classList.add('input-active');
+  hiddenInput.focus();
+  updateStatusline();
+}
+
+function deactivateInputMode() {
+  inputMode   = false;
+  interrupted = false;
+  waitingForUser = false;
+  userTyped   = '';
+  hiddenInput.value = '';
+  inputTextEl.textContent = '';
+  promptbox.classList.remove('input-active');
+  hiddenInput.blur();
+  updateStatusline();
+  // unblock the main loop so it restarts from a clean state
+  if (resumeSimFn) { resumeSimFn(); resumeSimFn = null; }
+}
+
+hiddenInput.addEventListener('input', () => {
+  userTyped = hiddenInput.value;
+  inputTextEl.textContent = userTyped;
+});
+
+hiddenInput.addEventListener('blur', () => {
+  // only deactivate if still in input mode (not mid-submit)
+  if (inputMode) deactivateInputMode();
+});
+
+// click anywhere on the terminal area to enter input mode
+document.querySelector('.window').addEventListener('click', () => {
+  if (!inputMode) activateInputMode();
+});
+
+function waitForResume() {
+  return new Promise(r => { resumeSimFn = r; });
+}
+
+async function handleSubmit() {
+  const text = userTyped.trim();
+  // switch off input mode visuals but keep waitingForUser=true until mock is done
+  inputMode = false;
+  interrupted = false;
+  userTyped = '';
+  hiddenInput.value = '';
+  inputTextEl.textContent = '';
+  promptbox.classList.remove('input-active');
+  hiddenInput.blur();
+  updateStatusline();
+
+  await mockUserCommand(text);
+
+  waitingForUser = false;
+  if (resumeSimFn) { resumeSimFn(); resumeSimFn = null; }
+}
+
+const USER_ACKS = [
+  "On it. Let me take a look.",
+  "Sure, I'll handle that.",
+  "Got it — working on it now.",
+  "Let me dig into that.",
+  "I'll take care of it.",
+  "Understood. Starting now.",
+  "Right, let me trace through this.",
+];
+
+async function mockUserCommand(text) {
+  await line('', 0);
+  if (text) {
+    await line(`<span class="green bold">❯</span> <span class="text">${esc(text)}</span>`, 0);
+  }
+  await line('', 30);
+  await spinner(rand(THINK_WORDS), rint(1500, 3000));
+  await line(`${T}${esc(rand(USER_ACKS))}`, 40);
+  await line('', 30);
+
+  const deadline = Date.now() + rint(10000, 15000);
+  const pool = [...EXPLORE, ...IMPLEMENT, ...VERIFY];
+  while (Date.now() < deadline) {
+    await rand(pool)();
+    if (Math.random() < 0.35) await claudeSay(rand(CLAUDE_REMARKS));
+    await sleep(jitter(120));
+  }
+  await line('', 30);
+}
+
 function trim() {
   while (term.children.length > MAX_LINES) term.removeChild(term.firstChild);
 }
@@ -261,6 +393,7 @@ function scroll() {
 }
 
 function addLine(html = '') {
+  if (interrupted) return document.createElement('div');
   const div = document.createElement('div');
   div.className = 'line';
   div.innerHTML = html;
@@ -292,7 +425,7 @@ async function spinner(label, ms) {
   txt.className = 'dim';
   div.append(glyph, ' ', txt);
   let elapsed = 0, i = 0, lastSecs = -1;
-  while (elapsed < ms) {
+  while (elapsed < ms && !interrupted) {
     glyph.textContent = SPIN[i++ % SPIN.length];
     const secs = Math.floor(elapsed / 1000);
     if (secs !== lastSecs) {
@@ -318,7 +451,7 @@ async function progressBar(label, ms, cls = 'green') {
   pctSpan.className = 'dim';
   div.append(labelSpan, barSpan, ' ', pctSpan);
   let elapsed = 0, lastFilled = -1;
-  while (true) {
+  while (!interrupted) {
     const pct = Math.min(1, elapsed / ms);
     const filled = Math.round(pct * width);
     if (filled !== lastFilled) {
@@ -1097,6 +1230,8 @@ async function runTask() {
   await banner();
   await sleep(400);
   while (true) {
+    if (waitingForUser) await waitForResume();
+    interrupted = false;
     try { await runTask(); }
     catch (e) { await sleep(300); }
   }
