@@ -67,12 +67,7 @@
     text-shadow: 0 0 2px rgba(232,232,230,0.18);
     scroll-behavior: auto;
   }
-  .terminal::-webkit-scrollbar { width: 8px; }
-  .terminal::-webkit-scrollbar-thumb {
-    background: rgba(255,255,255,0.14);
-    border-radius: 4px;
-  }
-  .terminal::-webkit-scrollbar-track { background: transparent; }
+  .terminal::-webkit-scrollbar { width: 0; }
 
   .line {
     white-space: pre-wrap;
@@ -446,9 +441,9 @@ async function spinner(label, ms) {
   const txt = document.createElement('span');
   txt.className = 'dim';
   div.append(glyph, ' ', txt);
-  let elapsed = 0, i = 0, lastSecs = -1;
+  glyph.textContent = '✳';
+  let elapsed = 0, lastSecs = -1;
   while (elapsed < ms && !interrupted) {
-    glyph.textContent = SPIN[i++ % SPIN.length];
     const secs = Math.floor(elapsed / 1000);
     if (secs !== lastSecs) {
       txt.textContent = `${label}… (${secs}s · esc to interrupt)`;
