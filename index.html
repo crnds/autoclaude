@@ -86,6 +86,16 @@
   .orange  { color: var(--orange); }
   .dim     { color: var(--dim); text-shadow: none; }
   .claude  { color: var(--claude); }
+  .claude.spinning {
+    display: inline-block;
+    width: 1ch;
+    text-align: center;
+    animation: spin-glyph 1.2s steps(8, end) infinite;
+  }
+  @keyframes spin-glyph {
+    0%   { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
   .bold    { font-weight: 700; }
   .add     { color: var(--green); background: rgba(50,215,75,0.09); display: inline-block; width: 100%; }
   .del     { color: var(--red);   background: rgba(255,105,97,0.09); display: inline-block; width: 100%; }
@@ -437,7 +447,7 @@ async function spinner(label, ms) {
   // re-parsing or node churn while the spinner runs
   const div = addLine();
   const glyph = document.createElement('span');
-  glyph.className = 'claude';
+  glyph.className = 'claude spinning';
   const txt = document.createElement('span');
   txt.className = 'dim';
   div.append(glyph, ' ', txt);
