@@ -455,8 +455,8 @@ async function spinner(label, ms) {
       lastSecs = secs;
     }
     scroll();
-    await sleep(65);
-    elapsed += 65;
+    await rawSleep(65);
+    elapsed += 65 * speedMult;
   }
   div.remove();
 }
