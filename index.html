@@ -1721,7 +1721,7 @@ async function scnMultiAgent() {
   // running spinner — decrements active count as time passes
   const spinMs   = rint(6000, 12000);
   const div      = addLine();
-  const glyph    = document.createElement('span'); glyph.className = 'claude';
+  const glyph    = document.createElement('span'); glyph.className = 'claude spinning';
   const txt      = document.createElement('span'); txt.className   = 'dim';
   div.append(glyph, ' ', txt);
   let elapsed = 0, si = 0, lastSecs = -1;
@@ -1734,8 +1734,8 @@ async function scnMultiAgent() {
       lastSecs = secs;
     }
     scroll();
-    await sleep(65);
-    elapsed += 65;
+    await rawSleep(65);
+    elapsed += 65 * speedMult;
   }
   div.remove();
   await line('', 20);
